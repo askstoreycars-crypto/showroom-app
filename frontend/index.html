@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Showroom Photo Booth</title>
+<style>
+  :root{ --bg:#f5f5f4; --panel:#fff; --ink:#1c1b1a; --sub:#6b6864; --line:#e5e3e0; --accent:#b8541f; --ok:#2f7a4d; --danger:#a3372c; --radius:14px; }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; padding-bottom:60px;}
+  header{padding:22px 20px 14px; max-width:1100px; margin:0 auto;}
+  header h1{margin:0 0 4px; font-size:1.5rem;}
+  header p{margin:0; color:var(--sub); font-size:0.92rem; max-width:640px; line-height:1.45;}
+  .wrap{max-width:1100px; margin:0 auto; padding:0 20px; display:flex; flex-direction:column; gap:18px;}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px;}
+  .dropzone{border:2px dashed var(--line); border-radius:var(--radius); padding:34px 20px; text-align:center; cursor:pointer;}
+  .dropzone.drag{border-color:var(--accent); background:#f4e3d8;}
+  .dropzone strong{display:block; margin-bottom:4px;}
+  .dropzone span{color:var(--sub); font-size:0.85rem;}
+  input[type=file]{display:none;}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; display:flex; flex-direction:column;}
+  .card .thumb{aspect-ratio:4/3; background:repeating-conic-gradient(#e9e7e4 0% 25%, #f6f5f3 0% 50%) 0 0/16px 16px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
+  .card .thumb img{max-width:100%; max-height:100%; display:block;}
+  .spinner{width:26px; height:26px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--accent); animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .meta{padding:10px 12px; display:flex; flex-direction:column; gap:8px;}
+  .name{font-size:0.82rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .status{font-size:0.74rem; color:var(--sub);}
+  .status.done{color:var(--ok); font-weight:600;}
+  .status.error{color:var(--danger); font-weight:600;}
+  .btn{appearance:none; border:1px solid var(--line); background:var(--panel); color:var(--ink); padding:10px 16px; border-radius:10px; font-size:0.88rem; font-weight:600; cursor:pointer;}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .btn:disabled{opacity:.45; cursor:not-allowed;}
+  .btn-row{display:flex; gap:10px; flex-wrap:wrap;}
+  footer.bar{position:sticky; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:12px 20px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:8px;}
+  .count{font-size:0.85rem; color:var(--sub);}
+  .empty{text-align:center; color:var(--sub); padding:30px 10px; font-size:0.9rem;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚗 Showroom Photo Booth</h1>
+  <p>Upload car photos and get them back cut out on a clean white background — real AI segmentation running on your own server, processed automatically, no per-photo editing.</p>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <div id="dropzone" class="dropzone">
+      <strong>Drop car photos here, or tap to choose files</strong>
+      <span>JPG or PNG · you can select many at once</span>
+      <input id="fileInput" type="file" accept="image/*" multiple>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin:0 0 12px; font-size:1rem;">Photos</h2>
+    <div id="grid" class="grid"></div>
+    <div id="emptyMsg" class="empty">No photos yet — add some above to get started.</div>
+  </div>
+</div>
+
+<footer class="bar">
+  <span class="count" id="countLabel">0 photos</span>
+  <div class="btn-row">
+    <button class="btn" id="clearBtn" disabled>Clear all</button>
+    <button class="btn primary" id="downloadAllBtn" disabled>Download all (.zip)</button>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(function(){
+  "use strict";
+  const state = { photos: [] };
+  const els = {
+    dropzone: document.getElementById('dropzone'),
+    fileInput: document.getElementById('fileInput'),
+    grid: document.getElementById('grid'),
+    emptyMsg: document.getElementById('emptyMsg'),
+    clearBtn: document.getElementById('clearBtn'),
+    downloadAllBtn: document.getElementById('downloadAllBtn'),
+    countLabel: document.getElementById('countLabel'),
+  };
+
+  els.dropzone.addEventListener('click', () => els.fileInput.click());
+  els.dropzone.addEventListener('dragover', e => { e.preventDefault(); els.dropzone.classList.add('drag'); });
+  els.dropzone.addEventListener('dragleave', () => els.dropzone.classList.remove('drag'));
+  els.dropzone.addEventListener('drop', e => { e.preventDefault(); els.dropzone.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+  els.fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+  function uid(){ return 'p' + Math.random().toString(36).slice(2,10); }
+
+  function handleFiles(fileList){
+    Array.from(fileList || []).filter(f => f.type.startsWith('image/')).forEach(file => {
+      const photo = { id: uid(), name: file.name, file, status: 'processing', resultBlob: null };
+      state.photos.push(photo);
+      renderGrid();
+      runProcess(photo);
+    });
+  }
+
+  async function runProcess(photo){
+    try{
+      const formData = new FormData();
+      formData.append('file', photo.file);
+      const res = await fetch('/api/process', { method: 'POST', body: formData });
+      if (!res.ok){
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Server error (${res.status})`);
+      }
+      photo.resultBlob = await res.blob();
+      photo.status = 'done';
+    }catch(e){
+      console.error(e);
+      photo.status = 'error';
+      photo.errorMsg = e.message;
+    }
+    renderGrid();
+    updateToolbar();
+  }
+
+  function outName(photo){ return photo.name.replace(/\.[^.]+$/, '') + '-showroom.jpg'; }
+
+  function renderGrid(){
+    els.emptyMsg.style.display = state.photos.length ? 'none' : 'block';
+    els.grid.innerHTML = '';
+    state.photos.forEach(photo => {
+      const card = document.createElement('div'); card.className = 'card';
+      const thumb = document.createElement('div'); thumb.className = 'thumb';
+      if (photo.status === 'processing'){
+        thumb.innerHTML = '<div class="spinner"></div>';
+      } else if (photo.status === 'done' && photo.resultBlob){
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(photo.resultBlob);
+        thumb.appendChild(img);
+      } else if (photo.status === 'error'){
+        thumb.innerHTML = '<span style="font-size:1.6rem;">⚠️</span>';
+      }
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const name = document.createElement('div'); name.className = 'name'; name.textContent = photo.name;
+      const status = document.createElement('div');
+      status.className = 'status' + (photo.status==='done' ? ' done' : photo.status==='error' ? ' error' : '');
+      status.textContent = { processing: 'Processing…', done: 'Done ✓', error: photo.errorMsg || 'Failed' }[photo.status];
+      const row = document.createElement('div'); row.className = 'btn-row';
+      const dlBtn = document.createElement('button'); dlBtn.className = 'btn'; dlBtn.textContent = 'Download';
+      dlBtn.disabled = photo.status !== 'done';
+      dlBtn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(photo.resultBlob);
+        a.download = outName(photo);
+        a.click();
+      };
+      const rmBtn = document.createElement('button'); rmBtn.className = 'btn'; rmBtn.textContent = 'Remove';
+      rmBtn.onclick = () => { state.photos = state.photos.filter(p => p.id !== photo.id); renderGrid(); updateToolbar(); };
+      row.appendChild(dlBtn); row.appendChild(rmBtn);
+      meta.appendChild(name); meta.appendChild(status); meta.appendChild(row);
+      card.appendChild(thumb); card.appendChild(meta);
+      els.grid.appendChild(card);
+    });
+    updateToolbar();
+  }
+
+  function updateToolbar(){
+    const total = state.photos.length;
+    const done = state.photos.filter(p => p.status === 'done');
+    els.clearBtn.disabled = total === 0;
+    els.downloadAllBtn.disabled = done.length === 0;
+    els.countLabel.textContent = `${total} photo${total===1?'':'s'}${done.length ? ' · ' + done.length + ' ready' : ''}`;
+  }
+
+  els.clearBtn.addEventListener('click', () => { state.photos = []; renderGrid(); updateToolbar(); });
+
+  els.downloadAllBtn.addEventListener('click', async () => {
+    const done = state.photos.filter(p => p.status === 'done' && p.resultBlob);
+    if (!done.length) return;
+    els.downloadAllBtn.disabled = true;
+    const prev = els.downloadAllBtn.textContent;
+    els.downloadAllBtn.textContent = 'Zipping…';
+    try{
+      const zip = new JSZip();
+      done.forEach(p => zip.file(outName(p), p.resultBlob));
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'showroom-photos.zip';
+      a.click();
+    } finally {
+      els.downloadAllBtn.textContent = prev;
+      els.downloadAllBtn.disabled = false;
+    }
+  });
+
+  renderGrid();
+  updateToolbar();
+})();
+</script>
+</body>
+</html>
