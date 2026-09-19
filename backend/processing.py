@@ -56,7 +56,7 @@ def _clean_alpha(alpha_img: Image.Image, low: int = 60, high: int = 150, feather
     return out
 
 
-def cutout_car(img: Image.Image, max_dim: int = 2000) -> Image.Image:
+def cutout_car(img: Image.Image, max_dim: int = 1000) -> Image.Image:
     """Run segmentation and return a tightly-cropped RGBA cutout of the car."""
     img = img.convert("RGB")
     if max(img.size) > max_dim:
